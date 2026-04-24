@@ -73,39 +73,39 @@ jobs:
 
             IMPORTANT: as soon as you have 4-6 solid events, STOP searching and WRITE digest.txt. A short accurate digest beats no digest. You can include fewer sections if you only found events in 2-3 categories.
 
-            OUTPUT: write the final digest to `digest.txt` in the repo root (use the Write tool). Plain text, no markdown, under 3800 chars. Structure:
+            OUTPUT: write the final digest to `digest.txt` in the repo root (use the Write tool). Use MARKDOWN formatting — ntfy renders it with clickable links. Under 3800 chars. Exact structure:
 
-            Weekend in Greater FTL — ${{ steps.weekend.outputs.human }}
+            # Weekend in Greater FTL — ${{ steps.weekend.outputs.human }}
 
-            == CAR SHOWS ==
-            • {NAME}
-              {WHEN} · {WHERE}
-              {WHAT}
-              {LINK}
+            ## Car shows
+            - **[NAME](LINK)**
+              WHEN · WHERE
+              WHAT
 
-            • {next event}
+            - **[next event name](next link)**
               ...
 
-            == COMEDY ==
-            • ...
+            ## Comedy
+            - ...
 
-            == THEATER ==
-            • ...
+            ## Theater
+            - ...
 
-            == GRAND OPENINGS / NEW ==
-            • ...
+            ## Grand openings / new
+            - ...
 
-            == FESTIVALS & MARKETS ==
-            • ...
+            ## Festivals & markets
+            - ...
 
-            == OTHER ==
-            • ...
+            ## Other
+            - ...
 
             Rules:
-            - Only include sections that have events.
-            - 4 lines per event (name, when+where, what, link) with a blank line between events.
-            - Keep each description ≤ 100 chars.
-            - Skip generic recurring stuff (normal weekly farmers markets) unless this weekend's edition has something special.
+            - Every event's name MUST be a markdown link: `**[Name](https://full-url)**`. Each event needs its OWN specific URL — never reuse the same URL across multiple events. If you only have a generic venue URL, that event gets dropped.
+            - Only include sections that have events. Drop empty sections entirely (don't write the heading).
+            - 3 lines per event: the name-link, then "WHEN · WHERE" on one line, then a one-sentence description. Blank line between events.
+            - Description ≤ 100 chars.
+            - Skip generic recurring stuff (standard weekly farmers markets) unless this weekend's edition has something special.
             - If total would exceed 3800 chars, drop weaker events — never trim the key fields of events you keep.
             - Write ONLY the digest body to digest.txt — no code fences, no commentary.
 
@@ -127,6 +127,7 @@ jobs:
           curl -sS --fail \
             -H "Title: $TITLE" \
             -H "Tags: calendar" \
+            -H "Markdown: yes" \
             -H "Content-Type: text/plain; charset=utf-8" \
             --data-binary "@digest.txt" \
             "https://ntfy.sh/$NTFY_TOPIC"
