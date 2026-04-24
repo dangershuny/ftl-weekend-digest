@@ -15,11 +15,15 @@ concurrency:
 permissions:
   contents: read
   id-token: write
+  pages: write
 
 jobs:
   digest:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,7 +90,7 @@ jobs:
                 "name": "Short event name (≤ 60 chars)",
                 "when": "Fri May 1, 7:00 PM ET",
                 "where": "Venue name · City, FL",
-                "what": "One sentence, ≤ 100 chars",
+                "what": "One sentence, ≤ 140 chars",
                 "url": "https://specific-event-page"
               }
 
@@ -100,10 +104,7 @@ jobs:
 
             When events.json is written and parses as valid JSON, reply with just "DONE" — nothing else.
 
-      - name: Push one ntfy notification per event
-        env:
-          NTFY_TOPIC: daniel-weekly-notifications-1993
-          HUMAN: ${{ steps.weekend.outputs.human }}
+      - name: Validate events.json
         run: |
           if [ ! -s events.json ]; then
             echo "::error::events.json is missing or empty"
@@ -116,49 +117,122 @@ jobs:
             exit 1
           fi
           COUNT=$(jq 'length' events.json)
-          echo "Sending $COUNT event notifications for $HUMAN"
-          if [ "$COUNT" -eq 0 ]; then
-            echo "::warning::No events found; sending a placeholder notification"
-            curl -sS --fail \
-              -H "Title: FTL Weekend — $HUMAN" \
-              -H "Tags: calendar" \
-              --data "No events found this week. Check back next Thursday." \
-              "https://ntfy.sh/$NTFY_TOPIC"
-            exit 0
-          fi
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Curated $COUNT events"
+        id: validate
 
-          # Header notification first, then one per event
+      - name: Render HTML digest into ./site
+        env:
+          HUMAN: ${{ steps.weekend.outputs.human }}
+          FRI: ${{ steps.weekend.outputs.fri }}
+          SUN: ${{ steps.weekend.outputs.sun }}
+        run: |
+          mkdir -p site
+          GENERATED_AT=$(TZ=America/New_York date "+%a %b %-d, %-I:%M %p ET")
+
+          # Body of the page: events grouped by category, in JSON's order.
+          # Use jq to emit per-event HTML blocks; bash to wrap in HTML shell.
+          EVENTS_HTML=$(jq -r '
+            group_by(.category)
+            | map({category: .[0].category, emoji: .[0].emoji, items: .})
+            | .[]
+            | "<section class=\"cat\">"
+              + "<h2>" + (.emoji // "") + " " + .category + "</h2>"
+              + "<ul>"
+              + ([.items[] |
+                  "<li><a href=\"" + .url + "\" target=\"_blank\" rel=\"noopener\">"
+                  + "<div class=\"name\">" + .name + "</div>"
+                  + "<div class=\"meta\">" + .when + " · " + .where + "</div>"
+                  + "<div class=\"desc\">" + .what + "</div>"
+                  + "</a></li>"
+                ] | join("\n"))
+              + "</ul>"
+              + "</section>"
+          ' events.json)
+
+          cat > site/index.html <<HTML
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="robots" content="noindex">
+          <title>FTL Weekend — ${HUMAN}</title>
+          <style>
+            :root {
+              --bg: #0f1115; --panel: #161922; --line: #262b36;
+              --text: #e9ecf1; --muted: #9aa3b2; --accent: #6cb6ff;
+            }
+            @media (prefers-color-scheme: light) {
+              :root { --bg:#fafafa; --panel:#fff; --line:#e5e7eb; --text:#101418; --muted:#5b6573; --accent:#0a66c2; }
+            }
+            * { box-sizing: border-box; }
+            html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+              font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+            .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+            header h1 { font-size: 22px; margin: 0 0 4px; }
+            header .sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+            section.cat { margin: 24px 0; }
+            section.cat h2 { font-size: 18px; margin: 0 0 8px; padding-bottom: 6px;
+              border-bottom: 1px solid var(--line); }
+            ul { list-style: none; padding: 0; margin: 0; }
+            li { margin: 0 0 10px; }
+            li a { display: block; padding: 14px 16px; background: var(--panel);
+              border: 1px solid var(--line); border-radius: 12px;
+              color: var(--text); text-decoration: none; transition: border-color .15s; }
+            li a:active, li a:hover { border-color: var(--accent); }
+            .name { font-weight: 600; font-size: 16px; }
+            .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+            .desc { font-size: 14px; margin-top: 6px; }
+            footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
+            footer a { color: var(--muted); }
+          </style>
+          </head>
+          <body>
+            <div class="wrap">
+              <header>
+                <h1>Greater Fort Lauderdale — ${HUMAN}</h1>
+                <div class="sub">Tap any event to open its page · Generated ${GENERATED_AT}</div>
+              </header>
+              ${EVENTS_HTML}
+              <footer>
+                Auto-curated weekly · <a href="https://github.com/dangershuny/ftl-weekend-digest" target="_blank" rel="noopener">source</a>
+              </footer>
+            </div>
+          </body>
+          </html>
+          HTML
+
+          echo "Generated site/index.html ($(wc -c < site/index.html) bytes)"
+          head -c 300 site/index.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Push single ntfy notification
+        env:
+          NTFY_TOPIC: daniel-weekly-notifications-1993
+          HUMAN: ${{ steps.weekend.outputs.human }}
+          COUNT: ${{ steps.validate.outputs.count }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          BODY=$(printf '%s events curated for %s.\n\nTap to open the digest — every event has its own tappable link.' "$COUNT" "$HUMAN")
           curl -sS --fail \
             -H "Title: FTL Weekend — $HUMAN" \
             -H "Tags: calendar" \
             -H "Priority: default" \
-            --data "$COUNT events coming in — each tappable opens its page." \
+            -H "Click: $PAGE_URL" \
+            -H "Content-Type: text/plain; charset=utf-8" \
+            --data "$BODY" \
             "https://ntfy.sh/$NTFY_TOPIC"
-
-          sleep 1
-
-          jq -c '.[]' events.json | while read -r event; do
-            NAME=$(echo "$event"  | jq -r '.name')
-            WHEN=$(echo "$event"  | jq -r '.when')
-            WHERE=$(echo "$event" | jq -r '.where')
-            WHAT=$(echo "$event"  | jq -r '.what')
-            URL=$(echo "$event"   | jq -r '.url')
-            CAT=$(echo "$event"   | jq -r '.category')
-            EMOJI=$(echo "$event" | jq -r '.emoji // "📌"')
-
-            BODY=$(printf '%s\n%s\n\n%s' "$WHEN" "$WHERE" "$WHAT")
-
-            curl -sS --fail \
-              -H "Title: $EMOJI $CAT — $NAME" \
-              -H "Click: $URL" \
-              -H "Tags: calendar" \
-              -H "Priority: default" \
-              -H "Content-Type: text/plain; charset=utf-8" \
-              --data "$BODY" \
-              "https://ntfy.sh/$NTFY_TOPIC"
-
-            echo "  pushed: $CAT — $NAME"
-            sleep 1
-          done
-
-          echo "All $COUNT events pushed to ntfy.sh/$NTFY_TOPIC"
+          echo
+          echo "Sent 1 notification → $PAGE_URL"
