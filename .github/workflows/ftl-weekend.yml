@@ -1,8 +1,8 @@
 name: FTL Weekend Digest
 
 on:
-  # Thursday 12:00 UTC = 8am EDT (Mar–Nov) / 7am EST (Nov–Mar).
-  # The 1-hour drift in winter is acceptable; it's still Thursday morning.
+  # Thursday 12:00 UTC = 8 AM EDT (Mar–Nov) / 7 AM EST (Nov–Mar).
+  # The 1-hour drift in winter is acceptable; still Thursday morning.
   schedule:
     - cron: "0 12 * * 4"
   workflow_dispatch: {}
@@ -17,20 +17,116 @@ permissions:
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Compute upcoming weekend window
+        id: weekend
+        run: |
+          FRI=$(date -u -d "next Friday" +%Y-%m-%d)
+          SUN=$(date -u -d "next Friday + 2 days" +%Y-%m-%d)
+          HUMAN="$(date -u -d "next Friday" "+%a %b %-d") – $(date -u -d "next Friday + 2 days" "+%a %b %-d")"
+          echo "fri=$FRI"       >> "$GITHUB_OUTPUT"
+          echo "sun=$SUN"       >> "$GITHUB_OUTPUT"
+          echo "human=$HUMAN"   >> "$GITHUB_OUTPUT"
+          echo "Target weekend: $HUMAN ($FRI to $SUN)"
+
+      - name: Curate weekend events with Claude Code
+        uses: anthropics/claude-code-action@v1
         with:
-          python-version: "3.12"
-          cache: pip
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--max-turns 25 --allowedTools Bash,Write,WebSearch,WebFetch"
+          prompt: |
+            Find interesting events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) in the greater Fort Lauderdale area.
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+            Cities to cover: Fort Lauderdale, Hollywood, Pompano Beach, Dania Beach, Plantation, Sunrise, Davie, Wilton Manors, Oakland Park, Las Olas, downtown FTL, the beach area.
 
-      - name: Run digest
+            INCLUDE:
+            - Car shows / cars & coffee meetups
+            - Comedy shows
+            - Theater / stage performances / plays / musicals
+            - Festivals, fairs, street markets
+            - Grand openings of restaurants, shops, or venues (like the recent Smorgasbord FTL opening)
+            - Art walks, gallery openings, museum exhibits
+            - Food events (food truck rallies, tasting events, pop-ups)
+            - Cultural events, fireworks, parades, unique one-off happenings
+
+            EXCLUDE:
+            - Concerts, DJ nights, music festivals
+            - Bar events, club nights, happy hours, wine/beer/cocktail tasting parties
+            - Anything primarily centered on drinking or live music
+
+            Use WebSearch aggressively. Run multiple queries, e.g.:
+            - "Fort Lauderdale weekend events ${{ steps.weekend.outputs.fri }}"
+            - "things to do Fort Lauderdale this weekend"
+            - "Fort Lauderdale car show"
+            - "Fort Lauderdale comedy shows this weekend"
+            - "Broward theater this weekend"
+            - "Fort Lauderdale grand opening"
+            - "South Florida festivals this weekend"
+            Check Visit Lauderdale, Eventbrite, Broward.org, Sun Sentinel events, Secret Florida, Do305, Time Out Miami/Fort Lauderdale. Use WebFetch on promising calendar pages to pull specifics.
+
+            For EACH event, capture: NAME, WHEN (day + start time), WHERE (venue + street address + city), WHAT (one-sentence description), LINK (full https URL to event/ticket page).
+
+            If you cannot verify time OR address OR link for an event, DROP it. Do not invent details.
+
+            OUTPUT: write the final digest to `digest.txt` in the repo root (use the Write tool). Plain text, no markdown, under 3800 chars. Structure:
+
+            Weekend in Greater FTL — ${{ steps.weekend.outputs.human }}
+
+            == CAR SHOWS ==
+            • {NAME}
+              {WHEN} · {WHERE}
+              {WHAT}
+              {LINK}
+
+            • {next event}
+              ...
+
+            == COMEDY ==
+            • ...
+
+            == THEATER ==
+            • ...
+
+            == GRAND OPENINGS / NEW ==
+            • ...
+
+            == FESTIVALS & MARKETS ==
+            • ...
+
+            == OTHER ==
+            • ...
+
+            Rules:
+            - Only include sections that have events.
+            - 4 lines per event (name, when+where, what, link) with a blank line between events.
+            - Keep each description ≤ 100 chars.
+            - Skip generic recurring stuff (normal weekly farmers markets) unless this weekend's edition has something special.
+            - If total would exceed 3800 chars, drop weaker events — never trim the key fields of events you keep.
+            - Write ONLY the digest body to digest.txt — no code fences, no commentary.
+
+            When digest.txt is written, reply with just "DONE" — nothing else.
+
+      - name: Push digest to ntfy
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'daniel-weekly-notifications-1993' }}
-        run: python scripts/fetch_events.py
+          NTFY_TOPIC: daniel-weekly-notifications-1993
+          TITLE: "FTL Weekend — ${{ steps.weekend.outputs.human }}"
+        run: |
+          if [ ! -s digest.txt ]; then
+            echo "::error::digest.txt is missing or empty"
+            ls -la
+            exit 1
+          fi
+          echo "Digest size: $(wc -c < digest.txt) bytes"
+          head -c 500 digest.txt
+          echo
+          curl -sS --fail \
+            -H "Title: $TITLE" \
+            -H "Tags: calendar" \
+            -H "Content-Type: text/plain; charset=utf-8" \
+            --data-binary "@digest.txt" \
+            "https://ntfy.sh/$NTFY_TOPIC"
+          echo
+          echo "Pushed to ntfy.sh/$NTFY_TOPIC"
