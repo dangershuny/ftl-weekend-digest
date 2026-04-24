@@ -34,10 +34,11 @@ jobs:
           echo "Target weekend: $HUMAN ($FRI to $SUN)"
 
       - name: Curate weekend events with Claude Code
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--max-turns 25 --allowedTools Bash,Write,WebSearch,WebFetch"
+          max_turns: "25"
+          allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
             Find interesting events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) in the greater Fort Lauderdale area.
 
