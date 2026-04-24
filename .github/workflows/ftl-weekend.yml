@@ -25,13 +25,23 @@ jobs:
       - name: Compute upcoming weekend window
         id: weekend
         run: |
-          FRI=$(date -u -d "next Friday" +%Y-%m-%d)
-          SUN=$(date -u -d "next Friday + 2 days" +%Y-%m-%d)
-          HUMAN="$(date -u -d "next Friday" "+%a %b %-d") – $(date -u -d "next Friday + 2 days" "+%a %b %-d")"
-          echo "fri=$FRI"       >> "$GITHUB_OUTPUT"
-          echo "sun=$SUN"       >> "$GITHUB_OUTPUT"
-          echo "human=$HUMAN"   >> "$GITHUB_OUTPUT"
-          echo "Target weekend: $HUMAN ($FRI to $SUN)"
+          # Target the upcoming Fri–Sun relative to today (US/Eastern).
+          # Mon–Fri → this week's Fri-Sun. Sat–Sun → still this weekend (Fri is in the past).
+          TZ=America/New_York
+          export TZ
+          DOW=$(date +%u)   # 1=Mon ... 7=Sun
+          if [ "$DOW" -le 5 ]; then
+            FRI_OFFSET=$((5 - DOW))          # Mon→4, Thu→1, Fri→0
+          else
+            FRI_OFFSET=$((5 - DOW))          # Sat→-1, Sun→-2 (weekend already started)
+          fi
+          FRI=$(date -d "today + ${FRI_OFFSET} days" +%Y-%m-%d)
+          SUN=$(date -d "today + $((FRI_OFFSET + 2)) days" +%Y-%m-%d)
+          HUMAN="$(date -d "$FRI" "+%a %b %-d") – $(date -d "$SUN" "+%a %b %-d")"
+          echo "fri=$FRI"     >> "$GITHUB_OUTPUT"
+          echo "sun=$SUN"     >> "$GITHUB_OUTPUT"
+          echo "human=$HUMAN" >> "$GITHUB_OUTPUT"
+          echo "Today (ET): $(date +%Y-%m-%d\ %A)  →  Target weekend: $HUMAN ($FRI to $SUN)"
 
       - name: Curate weekend events with Claude Code
         uses: anthropics/claude-code-base-action@beta
