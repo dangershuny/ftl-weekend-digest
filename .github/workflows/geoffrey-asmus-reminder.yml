@@ -1,0 +1,47 @@
+name: Geoffrey Asmus reminder (one-off)
+
+on:
+  # Saturday 2026-04-25, 18:00 UTC = 2 PM EDT.
+  # Cron expressions can't target a specific year, so this would fire
+  # every April 25 forever. The run-date guard below makes it a true one-off.
+  schedule:
+    - cron: "0 18 25 4 *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Guard — only fire on 2026-04-25
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          if [ "$today" != "2026-04-25" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "Today is $today, not 2026-04-25. Skipping."
+            exit 0
+          fi
+
+      - name: Push reminder to ntfy
+        env:
+          NTFY_TOPIC: daniel-weekly-notifications-1993
+        run: |
+          curl -sS --fail \
+            -H "Title: Comedy show tonight — leave by 6pm" \
+            -H "Tags: microphone,clock1" \
+            -H "Priority: high" \
+            -H "Content-Type: text/plain; charset=utf-8" \
+            -d "$(cat <<'EOF'
+          Geoffrey Asmus — 7pm show tonight
+          Leave home by 6pm
+
+          Fort Lauderdale Improv Comedy Theatre
+          177 N Pointe Dr, Dania Beach, FL 33004
+
+          Notes: 2-drink minimum · 21+ · first-come seating
+          https://www.improvftl.com/shows/345639
+          EOF
+          )" \
+            "https://ntfy.sh/$NTFY_TOPIC"
