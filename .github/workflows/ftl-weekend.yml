@@ -1,0 +1,36 @@
+name: FTL Weekend Digest
+
+on:
+  # Thursday 12:00 UTC = 8am EDT (Mar–Nov) / 7am EST (Nov–Mar).
+  # The 1-hour drift in winter is acceptable; it's still Thursday morning.
+  schedule:
+    - cron: "0 12 * * 4"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ftl-weekend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'daniel-weekly-notifications-1993' }}
+        run: python scripts/fetch_events.py
