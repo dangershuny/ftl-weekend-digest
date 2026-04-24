@@ -91,15 +91,17 @@ jobs:
                 "when": "Fri May 1, 7:00 PM ET",
                 "where": "Venue name · City, FL",
                 "what": "One sentence, ≤ 140 chars",
+                "cost": "Free" | "$25 per person" | "$15-$50 per person" | "Donation-based" | "Not listed",
                 "url": "https://specific-event-page"
               }
 
             Rules:
             - 5 to 10 events total.
-            - Every "url" must be distinct AND specific to its event. No two events share a URL.
+            - Every "url" must be distinct, specific to its event, and load successfully (no 404s). Verify with WebFetch before including if you're unsure.
             - Do NOT include events outside greater Fort Lauderdale (no Miami, South Beach, etc.).
             - Do NOT include concerts, tribute bands, or music-centered events.
             - "when" includes day of week, date, start time, and "ET".
+            - "cost" is REQUIRED. Quote the per-person cost: "Free" for no-charge, "$X per person" for ticketed, "$X-$Y per person" for ranges, "Donation-based" for donations, "Not listed" only as last resort. Skip cover charges or food/drink minimums in the cost field — keep cost about admission.
             - Write ONLY valid JSON to events.json — no comments, no code fences, no prose.
 
             When events.json is written and parses as valid JSON, reply with just "DONE" — nothing else.
@@ -117,9 +119,36 @@ jobs:
             exit 1
           fi
           COUNT=$(jq 'length' events.json)
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "Curated $COUNT events"
+          echo "Curated $COUNT events (pre URL-check)"
+
+      - name: Verify event URLs respond
         id: validate
+        run: |
+          echo "[]" > events.valid.json
+          UA="Mozilla/5.0 (compatible; ftl-weekend-digest/1.0)"
+          while IFS= read -r event; do
+            url=$(jq -r '.url' <<<"$event")
+            name=$(jq -r '.name' <<<"$event")
+            # Try HEAD first. Some sites reject HEAD or block bots, so fall back to GET.
+            code=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 10 -A "$UA" -I "$url" 2>/dev/null || echo "000")
+            if [ "$code" = "405" ] || [ "$code" = "000" ] || [ "$code" -ge 400 ]; then
+              code=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 15 -A "$UA" "$url" 2>/dev/null || echo "000")
+            fi
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+              echo "  KEEP $code  $name"
+              jq --argjson e "$event" '. += [$e]' events.valid.json > events.valid.tmp \
+                && mv events.valid.tmp events.valid.json
+            else
+              echo "  DROP $code  $name  ::  $url"
+            fi
+          done < <(jq -c '.[]' events.json)
+          mv events.valid.json events.json
+          COUNT=$(jq 'length' events.json)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Reachable events: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::warning::No events with reachable URLs after validation"
+          fi
 
       - name: Render HTML digest into ./site
         env:
@@ -144,6 +173,7 @@ jobs:
                   + "<div class=\"name\">" + .name + "</div>"
                   + "<div class=\"meta\">" + .when + " · " + .where + "</div>"
                   + "<div class=\"desc\">" + .what + "</div>"
+                  + "<div class=\"cost\">" + (.cost // "Cost not listed") + "</div>"
                   + "</a></li>"
                 ] | join("\n"))
               + "</ul>"
@@ -184,6 +214,7 @@ jobs:
             .name { font-weight: 600; font-size: 16px; }
             .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
             .desc { font-size: 14px; margin-top: 6px; }
+            .cost { font-size: 13px; margin-top: 6px; color: var(--accent); font-weight: 600; }
             footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
             footer a { color: var(--muted); }
           </style>
