@@ -37,7 +37,7 @@ jobs:
         uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          max_turns: "25"
+          max_turns: "60"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
             Find interesting events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) in the greater Fort Lauderdale area.
@@ -59,19 +59,19 @@ jobs:
             - Bar events, club nights, happy hours, wine/beer/cocktail tasting parties
             - Anything primarily centered on drinking or live music
 
-            Use WebSearch aggressively. Run multiple queries, e.g.:
-            - "Fort Lauderdale weekend events ${{ steps.weekend.outputs.fri }}"
-            - "things to do Fort Lauderdale this weekend"
-            - "Fort Lauderdale car show"
-            - "Fort Lauderdale comedy shows this weekend"
-            - "Broward theater this weekend"
-            - "Fort Lauderdale grand opening"
-            - "South Florida festivals this weekend"
-            Check Visit Lauderdale, Eventbrite, Broward.org, Sun Sentinel events, Secret Florida, Do305, Time Out Miami/Fort Lauderdale. Use WebFetch on promising calendar pages to pull specifics.
+            BUDGET: you have limited turns. Run AT MOST 5 WebSearch queries and AT MOST 3 WebFetch calls before writing the digest. Good starter queries:
+            - "things to do Fort Lauderdale weekend ${{ steps.weekend.outputs.fri }}"
+            - "Fort Lauderdale car show ${{ steps.weekend.outputs.fri }}"
+            - "Fort Lauderdale comedy theater this weekend"
+            - "Fort Lauderdale grand opening ${{ steps.weekend.outputs.fri }}"
+            - "Broward festivals markets this weekend"
+            Prefer WebSearch result snippets over WebFetch. Only fetch a page if the snippets don't give you name + time + venue + link for at least one event there.
 
             For EACH event, capture: NAME, WHEN (day + start time), WHERE (venue + street address + city), WHAT (one-sentence description), LINK (full https URL to event/ticket page).
 
-            If you cannot verify time OR address OR link for an event, DROP it. Do not invent details.
+            Be permissive on address — "venue + city" is fine if the street address isn't obvious. Time, venue name, and link are required; drop events missing those. Do not invent details.
+
+            IMPORTANT: as soon as you have 4-6 solid events, STOP searching and WRITE digest.txt. A short accurate digest beats no digest. You can include fewer sections if you only found events in 2-3 categories.
 
             OUTPUT: write the final digest to `digest.txt` in the repo root (use the Write tool). Plain text, no markdown, under 3800 chars. Structure:
 
