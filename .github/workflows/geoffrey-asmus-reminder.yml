@@ -32,6 +32,7 @@ jobs:
             -H "Title: Comedy show tonight — leave by 6pm" \
             -H "Tags: microphone,clock1" \
             -H "Priority: high" \
+            -H "Click: https://www.improvftl.com/shows/345639" \
             -H "Content-Type: text/plain; charset=utf-8" \
             -d "$(cat <<'EOF'
           Geoffrey Asmus — 7pm show tonight
@@ -41,7 +42,7 @@ jobs:
           177 N Pointe Dr, Dania Beach, FL 33004
 
           Notes: 2-drink minimum · 21+ · first-come seating
-          https://www.improvftl.com/shows/345639
+          Tap notification to open ticket page.
           EOF
           )" \
             "https://ntfy.sh/$NTFY_TOPIC"

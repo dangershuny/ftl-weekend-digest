@@ -1,10 +1,11 @@
 name: FTL Weekend Digest
 
 on:
-  # Thursday 12:00 UTC = 8 AM EDT (Mar–Nov) / 7 AM EST (Nov–Mar).
-  # The 1-hour drift in winter is acceptable; still Thursday morning.
+  # Thursday 13:00 UTC = 9 AM EDT (Mar–Nov) / 8 AM EST (Nov–Mar).
+  # GitHub Actions cron is UTC-only (no DST handling), so we pick a UTC time
+  # that lands firmly in Fort Lauderdale morning year-round.
   schedule:
-    - cron: "0 12 * * 4"
+    - cron: "0 13 * * 4"
   workflow_dispatch: {}
 
 concurrency:
@@ -22,19 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compute upcoming weekend window
+      - name: Compute upcoming weekend window (America/New_York)
         id: weekend
         run: |
-          # Target the upcoming Fri–Sun relative to today (US/Eastern).
-          # Mon–Fri → this week's Fri-Sun. Sat–Sun → still this weekend (Fri is in the past).
+          # Target the upcoming Fri–Sun in Fort Lauderdale local time.
           TZ=America/New_York
           export TZ
           DOW=$(date +%u)   # 1=Mon ... 7=Sun
-          if [ "$DOW" -le 5 ]; then
-            FRI_OFFSET=$((5 - DOW))          # Mon→4, Thu→1, Fri→0
-          else
-            FRI_OFFSET=$((5 - DOW))          # Sat→-1, Sun→-2 (weekend already started)
-          fi
+          # Days from today to Fri. Mon(1)→4, Thu(4)→1, Fri(5)→0, Sat(6)→-1, Sun(7)→-2.
+          FRI_OFFSET=$((5 - DOW))
           FRI=$(date -d "today + ${FRI_OFFSET} days" +%Y-%m-%d)
           SUN=$(date -d "today + $((FRI_OFFSET + 2)) days" +%Y-%m-%d)
           HUMAN="$(date -d "$FRI" "+%a %b %-d") – $(date -d "$SUN" "+%a %b %-d")"
@@ -52,11 +49,11 @@ jobs:
           prompt: |
             Find interesting events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) in the greater Fort Lauderdale area.
 
-            Cities to cover: Fort Lauderdale, Hollywood, Pompano Beach, Dania Beach, Plantation, Sunrise, Davie, Wilton Manors, Oakland Park, Las Olas, downtown FTL, the beach area.
+            Cities to cover: Fort Lauderdale, Hollywood, Pompano Beach, Dania Beach, Plantation, Sunrise, Davie, Wilton Manors, Oakland Park, Las Olas, downtown FTL, the beach area. HARD EXCLUDE anything in Miami, South Beach, Coral Gables, Miami Beach, or Brickell — those are NOT greater Fort Lauderdale.
 
             INCLUDE:
             - Car shows / cars & coffee meetups
-            - Comedy shows
+            - Comedy shows (stand-up, improv)
             - Theater / stage performances / plays / musicals
             - Festivals, fairs, street markets
             - Grand openings of restaurants, shops, or venues (like the recent Smorgasbord FTL opening)
@@ -65,81 +62,103 @@ jobs:
             - Cultural events, fireworks, parades, unique one-off happenings
 
             EXCLUDE:
-            - Concerts, DJ nights, music festivals
+            - Concerts, DJ nights, music festivals, tribute bands, live music events
             - Bar events, club nights, happy hours, wine/beer/cocktail tasting parties
             - Anything primarily centered on drinking or live music
 
-            BUDGET: you have limited turns. Run AT MOST 5 WebSearch queries and AT MOST 3 WebFetch calls before writing the digest. Good starter queries:
+            BUDGET: run AT MOST 5 WebSearch queries and AT MOST 3 WebFetch calls before writing events.json. Good starter queries:
             - "things to do Fort Lauderdale weekend ${{ steps.weekend.outputs.fri }}"
             - "Fort Lauderdale car show ${{ steps.weekend.outputs.fri }}"
-            - "Fort Lauderdale comedy theater this weekend"
+            - "Fort Lauderdale Improv comedy ${{ steps.weekend.outputs.fri }}"
             - "Fort Lauderdale grand opening ${{ steps.weekend.outputs.fri }}"
             - "Broward festivals markets this weekend"
-            Prefer WebSearch result snippets over WebFetch. Only fetch a page if the snippets don't give you name + time + venue + link for at least one event there.
+            Prefer WebSearch result snippets over WebFetch. Only fetch a page if the snippets don't give you a specific event URL.
 
-            For EACH event, capture: NAME, WHEN (day + start time), WHERE (venue + street address + city), WHAT (one-sentence description), LINK (full https URL to event/ticket page).
+            For EACH event, require ALL of: name, start time, venue, location (city in greater FTL), description, and a SPECIFIC event/ticket URL that deep-links to that event (NOT a generic venue calendar). Drop any event missing any of these. Do not invent details.
 
-            Be permissive on address — "venue + city" is fine if the street address isn't obvious. Time, venue name, and link are required; drop events missing those. Do not invent details.
+            IMPORTANT: as soon as you have 5-8 solid events, STOP searching and WRITE events.json. A small accurate list beats a larger one with weak entries.
 
-            IMPORTANT: as soon as you have 4-6 solid events, STOP searching and WRITE digest.txt. A short accurate digest beats no digest. You can include fewer sections if you only found events in 2-3 categories.
+            OUTPUT: write `events.json` to the repo root (use the Write tool) as a JSON array. Each element:
 
-            OUTPUT: write the final digest to `digest.txt` in the repo root (use the Write tool). Use MARKDOWN formatting — ntfy renders it with clickable links. Under 3800 chars. Exact structure:
-
-            # Weekend in Greater FTL — ${{ steps.weekend.outputs.human }}
-
-            ## Car shows
-            - **[NAME](LINK)**
-              WHEN · WHERE
-              WHAT
-
-            - **[next event name](next link)**
-              ...
-
-            ## Comedy
-            - ...
-
-            ## Theater
-            - ...
-
-            ## Grand openings / new
-            - ...
-
-            ## Festivals & markets
-            - ...
-
-            ## Other
-            - ...
+              {
+                "category": "Car shows" | "Comedy" | "Theater" | "Grand openings" | "Festivals" | "Food" | "Art" | "Other",
+                "emoji": "🚗" | "🎤" | "🎭" | "🎉" | "🎪" | "🍴" | "🎨" | "📌",
+                "name": "Short event name (≤ 60 chars)",
+                "when": "Fri May 1, 7:00 PM ET",
+                "where": "Venue name · City, FL",
+                "what": "One sentence, ≤ 100 chars",
+                "url": "https://specific-event-page"
+              }
 
             Rules:
-            - Every event's name MUST be a markdown link: `**[Name](https://full-url)**`. Each event needs its OWN specific URL — never reuse the same URL across multiple events. If you only have a generic venue URL, that event gets dropped.
-            - Only include sections that have events. Drop empty sections entirely (don't write the heading).
-            - 3 lines per event: the name-link, then "WHEN · WHERE" on one line, then a one-sentence description. Blank line between events.
-            - Description ≤ 100 chars.
-            - Skip generic recurring stuff (standard weekly farmers markets) unless this weekend's edition has something special.
-            - If total would exceed 3800 chars, drop weaker events — never trim the key fields of events you keep.
-            - Write ONLY the digest body to digest.txt — no code fences, no commentary.
+            - 5 to 10 events total.
+            - Every "url" must be distinct AND specific to its event. No two events share a URL.
+            - Do NOT include events outside greater Fort Lauderdale (no Miami, South Beach, etc.).
+            - Do NOT include concerts, tribute bands, or music-centered events.
+            - "when" includes day of week, date, start time, and "ET".
+            - Write ONLY valid JSON to events.json — no comments, no code fences, no prose.
 
-            When digest.txt is written, reply with just "DONE" — nothing else.
+            When events.json is written and parses as valid JSON, reply with just "DONE" — nothing else.
 
-      - name: Push digest to ntfy
+      - name: Push one ntfy notification per event
         env:
           NTFY_TOPIC: daniel-weekly-notifications-1993
-          TITLE: "FTL Weekend — ${{ steps.weekend.outputs.human }}"
+          HUMAN: ${{ steps.weekend.outputs.human }}
         run: |
-          if [ ! -s digest.txt ]; then
-            echo "::error::digest.txt is missing or empty"
+          if [ ! -s events.json ]; then
+            echo "::error::events.json is missing or empty"
             ls -la
             exit 1
           fi
-          echo "Digest size: $(wc -c < digest.txt) bytes"
-          head -c 500 digest.txt
-          echo
+          if ! jq empty events.json; then
+            echo "::error::events.json is not valid JSON"
+            cat events.json
+            exit 1
+          fi
+          COUNT=$(jq 'length' events.json)
+          echo "Sending $COUNT event notifications for $HUMAN"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::warning::No events found; sending a placeholder notification"
+            curl -sS --fail \
+              -H "Title: FTL Weekend — $HUMAN" \
+              -H "Tags: calendar" \
+              --data "No events found this week. Check back next Thursday." \
+              "https://ntfy.sh/$NTFY_TOPIC"
+            exit 0
+          fi
+
+          # Header notification first, then one per event
           curl -sS --fail \
-            -H "Title: $TITLE" \
+            -H "Title: FTL Weekend — $HUMAN" \
             -H "Tags: calendar" \
-            -H "Markdown: yes" \
-            -H "Content-Type: text/plain; charset=utf-8" \
-            --data-binary "@digest.txt" \
+            -H "Priority: default" \
+            --data "$COUNT events coming in — each tappable opens its page." \
             "https://ntfy.sh/$NTFY_TOPIC"
-          echo
-          echo "Pushed to ntfy.sh/$NTFY_TOPIC"
+
+          sleep 1
+
+          jq -c '.[]' events.json | while read -r event; do
+            NAME=$(echo "$event"  | jq -r '.name')
+            WHEN=$(echo "$event"  | jq -r '.when')
+            WHERE=$(echo "$event" | jq -r '.where')
+            WHAT=$(echo "$event"  | jq -r '.what')
+            URL=$(echo "$event"   | jq -r '.url')
+            CAT=$(echo "$event"   | jq -r '.category')
+            EMOJI=$(echo "$event" | jq -r '.emoji // "📌"')
+
+            BODY=$(printf '%s\n%s\n\n%s' "$WHEN" "$WHERE" "$WHAT")
+
+            curl -sS --fail \
+              -H "Title: $EMOJI $CAT — $NAME" \
+              -H "Click: $URL" \
+              -H "Tags: calendar" \
+              -H "Priority: default" \
+              -H "Content-Type: text/plain; charset=utf-8" \
+              --data "$BODY" \
+              "https://ntfy.sh/$NTFY_TOPIC"
+
+            echo "  pushed: $CAT — $NAME"
+            sleep 1
+          done
+
+          echo "All $COUNT events pushed to ntfy.sh/$NTFY_TOPIC"
