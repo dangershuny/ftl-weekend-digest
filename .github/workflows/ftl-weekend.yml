@@ -256,12 +256,20 @@ jobs:
           COUNT: ${{ steps.validate.outputs.count }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          BODY=$(printf '%s events curated for %s.\n\nTap to open the digest — every event has its own tappable link.' "$COUNT" "$HUMAN")
+          # Build body: header line, list of event names with emoji + per-person cost,
+          # then the bare URL on its own line so it auto-linkifies in clients that
+          # don't honor the Click header (notably some iOS notification previews).
+          EVENT_LIST=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events.json)
+
+          BODY=$(printf '%s events for %s — tap to open or follow the link below.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
+                  "$COUNT" "$HUMAN" "$EVENT_LIST" "$PAGE_URL")
+
           curl -sS --fail \
             -H "Title: FTL Weekend — $HUMAN" \
             -H "Tags: calendar" \
             -H "Priority: default" \
             -H "Click: $PAGE_URL" \
+            -H "Actions: view, Open digest, $PAGE_URL, clear=true" \
             -H "Content-Type: text/plain; charset=utf-8" \
             --data "$BODY" \
             "https://ntfy.sh/$NTFY_TOPIC"
