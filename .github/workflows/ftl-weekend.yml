@@ -1,11 +1,11 @@
 name: FTL Weekend Digest
 
 on:
-  # Thursday 13:00 UTC = 9 AM EDT (Mar–Nov) / 8 AM EST (Nov–Mar).
+  # Wednesday 13:00 UTC = 9 AM EDT (Mar–Nov) / 8 AM EST (Nov–Mar).
   # GitHub Actions cron is UTC-only (no DST handling), so we pick a UTC time
   # that lands firmly in Fort Lauderdale morning year-round.
   schedule:
-    - cron: "0 13 * * 4"
+    - cron: "0 13 * * 3"
   workflow_dispatch: {}
 
 concurrency:
@@ -20,7 +20,7 @@ permissions:
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -34,7 +34,7 @@ jobs:
           TZ=America/New_York
           export TZ
           DOW=$(date +%u)   # 1=Mon ... 7=Sun
-          # Days from today to Fri. Mon(1)→4, Thu(4)→1, Fri(5)→0, Sat(6)→-1, Sun(7)→-2.
+          # Days from today to Fri. Mon(1)→4, Wed(3)→2, Thu(4)→1, Fri(5)→0, Sat(6)→-1, Sun(7)→-2.
           FRI_OFFSET=$((5 - DOW))
           FRI=$(date -d "today + ${FRI_OFFSET} days" +%Y-%m-%d)
           SUN=$(date -d "today + $((FRI_OFFSET + 2)) days" +%Y-%m-%d)
@@ -44,7 +44,7 @@ jobs:
           echo "human=$HUMAN" >> "$GITHUB_OUTPUT"
           echo "Today (ET): $(date +%Y-%m-%d\ %A)  →  Target weekend: $HUMAN ($FRI to $SUN)"
 
-      - name: Curate weekend events with Claude Code
+      - name: Curate Fort Lauderdale weekend events with Claude Code
         uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -70,17 +70,18 @@ jobs:
             - Bar events, club nights, happy hours, wine/beer/cocktail tasting parties
             - Anything primarily centered on drinking or live music
 
-            BUDGET: run AT MOST 5 WebSearch queries and AT MOST 3 WebFetch calls before writing events.json. Good starter queries:
+            BUDGET: run AT MOST 9 WebSearch queries and AT MOST 5 WebFetch calls before writing events.json. Good starter queries:
             - "things to do Fort Lauderdale weekend ${{ steps.weekend.outputs.fri }}"
             - "Fort Lauderdale car show ${{ steps.weekend.outputs.fri }}"
             - "Fort Lauderdale Improv comedy ${{ steps.weekend.outputs.fri }}"
             - "Fort Lauderdale grand opening ${{ steps.weekend.outputs.fri }}"
             - "Broward festivals markets this weekend"
+            - "Hollywood Pompano Beach events ${{ steps.weekend.outputs.fri }}"
             Prefer WebSearch result snippets over WebFetch. Only fetch a page if the snippets don't give you a specific event URL.
 
             For EACH event, require ALL of: name, start time, venue, location (city in greater FTL), description, and a SPECIFIC event/ticket URL that deep-links to that event (NOT a generic venue calendar). Drop any event missing any of these. Do not invent details.
 
-            IMPORTANT: as soon as you have 5-8 solid events, STOP searching and WRITE events.json. A small accurate list beats a larger one with weak entries.
+            IMPORTANT: as soon as you have 12-16 solid events, STOP searching and WRITE events.json. A list of accurate entries beats a larger one with weak entries.
 
             OUTPUT: write `events.json` to the repo root (use the Write tool) as a JSON array. Each element:
 
@@ -96,7 +97,7 @@ jobs:
               }
 
             Rules:
-            - 5 to 10 events total.
+            - 10 to 20 events total.
             - Every "url" must be distinct, specific to its event, and load successfully (no 404s). Verify with WebFetch before including if you're unsure.
             - Do NOT include events outside greater Fort Lauderdale (no Miami, South Beach, etc.).
             - Do NOT include concerts, tribute bands, or music-centered events.
@@ -106,51 +107,132 @@ jobs:
 
             When events.json is written and parses as valid JSON, reply with just "DONE" — nothing else.
 
-      - name: Validate events.json
+      - name: Curate bigger regional events (within ~5h drive) with Claude Code
+        uses: anthropics/claude-code-base-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          max_turns: "60"
+          allowed_tools: "Bash,Write,WebSearch,WebFetch"
+          prompt: |
+            Find BIGGER, marquee-scale events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) that are within roughly a 5-HOUR DRIVE of Fort Lauderdale, FL — in ANY direction.
+
+            GEOGRAPHY: a ~5-hour drive from Fort Lauderdale reaches, among others: West Palm Beach, Boca Raton, Jupiter, Port St. Lucie, Vero Beach, the Florida Keys (Key Largo down toward Key West), Miami, Naples, Fort Myers, Sarasota, Tampa, St. Petersburg, Clearwater, Lakeland, Orlando, Kissimmee, Daytona Beach, Melbourne, and Cocoa Beach. Anything within about 5 hours by car qualifies. EXCLUDE events that are essentially in the immediate greater Fort Lauderdale / Broward area (those go in the separate local digest) — focus on destinations worth a drive.
+
+            "BIGGER" means larger-scale or marquee draws, e.g.: major festivals and fairs, big-name touring comedy, Broadway-caliber / national touring theater and musicals, large car shows and auto expos, theme-park special events and seasonal celebrations, major street festivals, big food & cultural festivals, marquee grand openings, fireworks spectaculars, and notable one-off happenings. Prefer events with regional/statewide significance over small local meetups.
+
+            INCLUDE (same spirit as the local digest, but bigger):
+            - Car shows / auto expos
+            - Comedy shows (stand-up, improv) — especially touring headliners
+            - Theater / stage performances / plays / musicals — especially national tours
+            - Festivals, fairs, street markets (large-scale)
+            - Grand openings of notable restaurants, shops, attractions, or venues
+            - Art walks, gallery openings, museum exhibits, major art shows
+            - Food events (food & wine festivals, big tasting events, pop-ups)
+            - Cultural events, fireworks, parades, theme-park celebrations, unique one-off happenings
+
+            EXCLUDE:
+            - Concerts, DJ nights, music festivals, tribute bands, live music events
+            - Bar events, club nights, happy hours, wine/beer/cocktail tasting parties
+            - Anything primarily centered on drinking or live music
+
+            BUDGET: run AT MOST 9 WebSearch queries and AT MOST 5 WebFetch calls before writing events-regional.json. Good starter queries:
+            - "biggest events Florida weekend ${{ steps.weekend.outputs.fri }}"
+            - "Orlando festivals this weekend ${{ steps.weekend.outputs.fri }}"
+            - "Tampa St Petersburg events ${{ steps.weekend.outputs.fri }}"
+            - "West Palm Beach festival ${{ steps.weekend.outputs.fri }}"
+            - "Fort Myers Naples Sarasota events this weekend"
+            - "Florida Keys events ${{ steps.weekend.outputs.fri }}"
+            Prefer WebSearch result snippets over WebFetch. Only fetch a page if the snippets don't give you a specific event URL.
+
+            For EACH event, require ALL of: name, start time, venue, location (city + how far / which metro), description, and a SPECIFIC event/ticket URL that deep-links to that event (NOT a generic venue calendar). Drop any event missing any of these. Do not invent details.
+
+            IMPORTANT: as soon as you have 8-12 solid events, STOP searching and WRITE events-regional.json. A list of accurate entries beats a larger one with weak entries.
+
+            OUTPUT: write `events-regional.json` to the repo root (use the Write tool) as a JSON array. Each element:
+
+              {
+                "category": "Car shows" | "Comedy" | "Theater" | "Grand openings" | "Festivals" | "Food" | "Art" | "Other",
+                "emoji": "🚗" | "🎤" | "🎭" | "🎉" | "🎪" | "🍴" | "🎨" | "📌",
+                "name": "Short event name (≤ 60 chars)",
+                "when": "Fri May 1, 7:00 PM ET",
+                "where": "Venue name · City, FL (≈Xh from FTL)",
+                "what": "One sentence, ≤ 140 chars",
+                "cost": "Free" | "$25 per person" | "$15-$50 per person" | "Donation-based" | "Not listed",
+                "url": "https://specific-event-page"
+              }
+
+            Rules:
+            - 8 to 14 events total.
+            - Every "url" must be distinct, specific to its event, and load successfully (no 404s). Verify with WebFetch before including if you're unsure.
+            - Stay within ~5 hours' drive of Fort Lauderdale; do NOT include events in the immediate Broward / greater Fort Lauderdale area (those belong in the local digest).
+            - Do NOT include concerts, tribute bands, or music-centered events.
+            - "when" includes day of week, date, start time, and "ET".
+            - In "where", note the approximate drive time from Fort Lauderdale (e.g. "≈3h from FTL").
+            - "cost" is REQUIRED. Quote the per-person cost: "Free" for no-charge, "$X per person" for ticketed, "$X-$Y per person" for ranges, "Donation-based" for donations, "Not listed" only as last resort. Skip cover charges or food/drink minimums in the cost field — keep cost about admission.
+            - Write ONLY valid JSON to events-regional.json — no comments, no code fences, no prose.
+
+            When events-regional.json is written and parses as valid JSON, reply with just "DONE" — nothing else.
+
+      - name: Validate events JSON files
         run: |
-          if [ ! -s events.json ]; then
-            echo "::error::events.json is missing or empty"
-            ls -la
-            exit 1
-          fi
-          if ! jq empty events.json; then
-            echo "::error::events.json is not valid JSON"
-            cat events.json
-            exit 1
-          fi
-          COUNT=$(jq 'length' events.json)
-          echo "Curated $COUNT events (pre URL-check)"
+          for f in events.json events-regional.json; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing or empty"
+              ls -la
+              exit 1
+            fi
+            if ! jq empty "$f"; then
+              echo "::error::$f is not valid JSON"
+              cat "$f"
+              exit 1
+            fi
+            echo "Curated $(jq 'length' "$f") events in $f (pre URL-check)"
+          done
 
       - name: Verify event URLs respond
         id: validate
         run: |
-          echo "[]" > events.valid.json
           UA="Mozilla/5.0 (compatible; ftl-weekend-digest/1.0)"
-          while IFS= read -r event; do
-            url=$(jq -r '.url' <<<"$event")
-            name=$(jq -r '.name' <<<"$event")
-            # Try HEAD first. Some sites reject HEAD or block bots, so fall back to GET.
-            code=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 10 -A "$UA" -I "$url" 2>/dev/null || echo "000")
-            if [ "$code" = "405" ] || [ "$code" = "000" ] || [ "$code" -ge 400 ]; then
-              code=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 15 -A "$UA" "$url" 2>/dev/null || echo "000")
-            fi
-            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
-              echo "  KEEP $code  $name"
-              jq --argjson e "$event" '. += [$e]' events.valid.json > events.valid.tmp \
-                && mv events.valid.tmp events.valid.json
-            else
-              echo "  DROP $code  $name  ::  $url"
-            fi
-          done < <(jq -c '.[]' events.json)
-          mv events.valid.json events.json
+          check_file() {
+            local src="$1"
+            echo "[]" > "$src.valid"
+            while IFS= read -r event; do
+              url=$(jq -r '.url' <<<"$event")
+              name=$(jq -r '.name' <<<"$event")
+              # Try HEAD first. Some sites reject HEAD or block bots, so fall back to GET.
+              code=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 10 -A "$UA" -I "$url" 2>/dev/null || echo "000")
+              if [ "$code" = "405" ] || [ "$code" = "000" ] || [ "$code" -ge 400 ]; then
+                code=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 15 -A "$UA" "$url" 2>/dev/null || echo "000")
+              fi
+              if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+                echo "  KEEP $code  $name"
+                jq --argjson e "$event" '. += [$e]' "$src.valid" > "$src.tmp" \
+                  && mv "$src.tmp" "$src.valid"
+              else
+                echo "  DROP $code  $name  ::  $url"
+              fi
+            done < <(jq -c '.[]' "$src")
+            mv "$src.valid" "$src"
+          }
+
+          echo "== Local Fort Lauderdale events =="
+          check_file events.json
+          echo "== Bigger regional events =="
+          check_file events-regional.json
+
           COUNT=$(jq 'length' events.json)
+          COUNT_REGIONAL=$(jq 'length' events-regional.json)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "Reachable events: $COUNT"
+          echo "count_regional=$COUNT_REGIONAL" >> "$GITHUB_OUTPUT"
+          echo "Reachable local events: $COUNT · regional events: $COUNT_REGIONAL"
           if [ "$COUNT" -eq 0 ]; then
-            echo "::warning::No events with reachable URLs after validation"
+            echo "::warning::No local events with reachable URLs after validation"
+          fi
+          if [ "$COUNT_REGIONAL" -eq 0 ]; then
+            echo "::warning::No regional events with reachable URLs after validation"
           fi
 
-      - name: Render HTML digest into ./site
+      - name: Render HTML digests into ./site
         env:
           HUMAN: ${{ steps.weekend.outputs.human }}
           FRI: ${{ steps.weekend.outputs.fri }}
@@ -159,35 +241,39 @@ jobs:
           mkdir -p site
           GENERATED_AT=$(TZ=America/New_York date "+%a %b %-d, %-I:%M %p ET")
 
-          # Body of the page: events grouped by category, in JSON's order.
-          # Use jq to emit per-event HTML blocks; bash to wrap in HTML shell.
-          EVENTS_HTML=$(jq -r '
-            group_by(.category)
-            | map({category: .[0].category, emoji: .[0].emoji, items: .})
-            | .[]
-            | "<section class=\"cat\">"
-              + "<h2>" + (.emoji // "") + " " + .category + "</h2>"
-              + "<ul>"
-              + ([.items[] |
-                  "<li><a href=\"" + .url + "\" target=\"_blank\" rel=\"noopener\">"
-                  + "<div class=\"name\">" + .name + "</div>"
-                  + "<div class=\"meta\">" + .when + " · " + .where + "</div>"
-                  + "<div class=\"desc\">" + .what + "</div>"
-                  + "<div class=\"cost\">" + (.cost // "Cost not listed") + "</div>"
-                  + "</a></li>"
-                ] | join("\n"))
-              + "</ul>"
-              + "</section>"
-          ' events.json)
+          # Render one HTML page from a given events JSON file.
+          # Args: <events-json> <out-html> <page-title> <page-heading> <other-link-href> <other-link-label>
+          render_page() {
+            local src="$1" out="$2" title="$3" heading="$4" other_href="$5" other_label="$6"
 
-          cat > site/index.html <<HTML
+            local EVENTS_HTML
+            EVENTS_HTML=$(jq -r '
+              group_by(.category)
+              | map({category: .[0].category, emoji: .[0].emoji, items: .})
+              | .[]
+              | "<section class=\"cat\">"
+                + "<h2>" + (.emoji // "") + " " + .category + "</h2>"
+                + "<ul>"
+                + ([.items[] |
+                    "<li><a href=\"" + .url + "\" target=\"_blank\" rel=\"noopener\">"
+                    + "<div class=\"name\">" + .name + "</div>"
+                    + "<div class=\"meta\">" + .when + " · " + .where + "</div>"
+                    + "<div class=\"desc\">" + .what + "</div>"
+                    + "<div class=\"cost\">" + (.cost // "Cost not listed") + "</div>"
+                    + "</a></li>"
+                  ] | join("\n"))
+                + "</ul>"
+                + "</section>"
+            ' "$src")
+
+            cat > "$out" <<HTML
           <!DOCTYPE html>
           <html lang="en">
           <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <meta name="robots" content="noindex">
-          <title>FTL Weekend — ${HUMAN}</title>
+          <title>${title}</title>
           <style>
             :root {
               --bg: #0f1115; --panel: #161922; --line: #262b36;
@@ -201,7 +287,9 @@ jobs:
               font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
             .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
             header h1 { font-size: 22px; margin: 0 0 4px; }
-            header .sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+            header .sub { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+            .switch { display: inline-block; margin-bottom: 24px; font-size: 14px; }
+            .switch a { color: var(--accent); text-decoration: none; font-weight: 600; }
             section.cat { margin: 24px 0; }
             section.cat h2 { font-size: 18px; margin: 0 0 8px; padding-bottom: 6px;
               border-bottom: 1px solid var(--line); }
@@ -222,8 +310,9 @@ jobs:
           <body>
             <div class="wrap">
               <header>
-                <h1>Greater Fort Lauderdale — ${HUMAN}</h1>
+                <h1>${heading}</h1>
                 <div class="sub">Tap any event to open its page · Generated ${GENERATED_AT}</div>
+                <div class="switch"><a href="${other_href}">${other_label} →</a></div>
               </header>
               ${EVENTS_HTML}
               <footer>
@@ -233,9 +322,18 @@ jobs:
           </body>
           </html>
           HTML
+            echo "Generated $out ($(wc -c < "$out") bytes)"
+          }
 
-          echo "Generated site/index.html ($(wc -c < site/index.html) bytes)"
-          head -c 300 site/index.html
+          render_page events.json site/index.html \
+            "FTL Weekend — ${HUMAN}" \
+            "Greater Fort Lauderdale — ${HUMAN}" \
+            "regional.html" "Bigger events within a 5-hour drive"
+
+          render_page events-regional.json site/regional.html \
+            "Within 5h of FTL — ${HUMAN}" \
+            "Bigger events within ~5h of Fort Lauderdale — ${HUMAN}" \
+            "index.html" "Back to Fort Lauderdale weekend"
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -249,29 +347,46 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Push single ntfy notification
+      - name: Push ntfy notifications
         env:
           NTFY_TOPIC: daniel-weekly-notifications-1993
           HUMAN: ${{ steps.weekend.outputs.human }}
           COUNT: ${{ steps.validate.outputs.count }}
+          COUNT_REGIONAL: ${{ steps.validate.outputs.count_regional }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          # Build body: header line, list of event names with emoji + per-person cost,
-          # then the bare URL on its own line so it auto-linkifies in clients that
-          # don't honor the Click header (notably some iOS notification previews).
+          # The deploy-pages page_url is the base (ends with "/").
+          LOCAL_URL="$PAGE_URL"
+          REGIONAL_URL="${PAGE_URL}regional.html"
+
+          # --- Notification 1: local Fort Lauderdale events ---
           EVENT_LIST=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events.json)
-
           BODY=$(printf '%s events for %s — tap to open or follow the link below.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
-                  "$COUNT" "$HUMAN" "$EVENT_LIST" "$PAGE_URL")
-
+                  "$COUNT" "$HUMAN" "$EVENT_LIST" "$LOCAL_URL")
           curl -sS --fail \
             -H "Title: FTL Weekend — $HUMAN" \
             -H "Tags: calendar" \
             -H "Priority: default" \
-            -H "Click: $PAGE_URL" \
-            -H "Actions: view, Open digest, $PAGE_URL, clear=true" \
+            -H "Click: $LOCAL_URL" \
+            -H "Actions: view, Open digest, $LOCAL_URL, clear=true" \
             -H "Content-Type: text/plain; charset=utf-8" \
             --data "$BODY" \
             "https://ntfy.sh/$NTFY_TOPIC"
           echo
-          echo "Sent 1 notification → $PAGE_URL"
+          echo "Sent local notification → $LOCAL_URL"
+
+          # --- Notification 2: bigger events within a 5-hour drive ---
+          EVENT_LIST_REGIONAL=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events-regional.json)
+          BODY_REGIONAL=$(printf '%s bigger events within ~5h of Fort Lauderdale for %s — worth the drive.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
+                  "$COUNT_REGIONAL" "$HUMAN" "$EVENT_LIST_REGIONAL" "$REGIONAL_URL")
+          curl -sS --fail \
+            -H "Title: Bigger events near FTL (≤5h drive) — $HUMAN" \
+            -H "Tags: car,calendar" \
+            -H "Priority: default" \
+            -H "Click: $REGIONAL_URL" \
+            -H "Actions: view, Open regional digest, $REGIONAL_URL, clear=true" \
+            -H "Content-Type: text/plain; charset=utf-8" \
+            --data "$BODY_REGIONAL" \
+            "https://ntfy.sh/$NTFY_TOPIC"
+          echo
+          echo "Sent regional notification → $REGIONAL_URL"
