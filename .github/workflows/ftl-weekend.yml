@@ -48,6 +48,9 @@ jobs:
         uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Use the "sonnet" alias (not a dated ID) so this always resolves to the
+          # current Sonnet generation and never 404s when an old model is retired.
+          model: sonnet
           max_turns: "60"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
@@ -111,6 +114,7 @@ jobs:
         uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: sonnet
           max_turns: "60"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
@@ -390,3 +394,20 @@ jobs:
             "https://ntfy.sh/$NTFY_TOPIC"
           echo
           echo "Sent regional notification → $REGIONAL_URL"
+
+      # Safety net: if ANY step above failed, tell the user instead of failing
+      # silently. This is why the digest could break for weeks unnoticed.
+      - name: Notify on failure
+        if: failure()
+        env:
+          NTFY_TOPIC: daniel-weekly-notifications-1993
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -sS \
+            -H "Title: ⚠️ FTL Weekend Digest failed" \
+            -H "Tags: warning" \
+            -H "Priority: high" \
+            -H "Click: $RUN_URL" \
+            -H "Content-Type: text/plain; charset=utf-8" \
+            --data "This week's Fort Lauderdale digest did not send — a step failed. Tap to view the run log." \
+            "https://ntfy.sh/$NTFY_TOPIC" || true
