@@ -48,9 +48,10 @@ jobs:
         uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Use the "sonnet" alias (not a dated ID) so this always resolves to the
-          # current Sonnet generation and never 404s when an old model is retired.
-          model: sonnet
+          # Pin an explicit current model ID. The action's bundled CLI has a stale
+          # alias table where "sonnet" still maps to the retired claude-sonnet-4;
+          # an explicit ID bypasses that table and is sent straight to the API.
+          model: claude-sonnet-5
           max_turns: "60"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
@@ -114,7 +115,7 @@ jobs:
         uses: anthropics/claude-code-base-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          model: sonnet
+          model: claude-sonnet-5
           max_turns: "60"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
