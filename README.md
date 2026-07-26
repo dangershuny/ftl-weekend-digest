@@ -40,6 +40,8 @@ gh run watch --repo dangershuny/ftl-weekend-digest
 - Schedule: edit the `cron:` in the same file (currently Wednesday).
 - Destination: change `NTFY_TOPIC` in the "Push ntfy notifications" step (both notifications use the same topic).
 
-## Also in this repo
+## Keeping the schedule alive
 
-- `.github/workflows/geoffrey-asmus-reminder.yml` — one-off reminder for a Saturday 2026-04-25 2 PM EDT ntfy push. Delete after the show.
+GitHub automatically **disables scheduled (cron) workflows in a public repo after 60 days with no new commits** on the default branch — and only commits count (scheduled runs, issues, and tags do not). Since the digest never commits anything on its own, its schedule would silently stop after ~60 idle days.
+
+`.github/workflows/keepalive.yml` prevents this: twice a week it checks how long it's been since the last commit and, once the repo has been quiet ~45 days, writes a dated marker to `.github/keepalive.txt` and pushes it. That commit resets GitHub's 60-day clock and keeps every scheduled workflow in this repo enabled. On an active repo it does nothing, so it adds no commit noise. Tune the window via `THRESHOLD_DAYS` in that file (keep it comfortably under 60).
