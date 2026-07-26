@@ -1,0 +1,61 @@
+name: Keepalive (prevent 60-day cron disable)
+
+# GitHub automatically DISABLES scheduled (cron) workflows in a public repo
+# after 60 days with no new commits on the default branch. The weekly digest
+# never commits anything on its own, so without this guard the schedule would
+# silently stop firing (and notifications would just... stop).
+#
+# This job makes a tiny dated commit ONLY when the repo has been quiet for a
+# while (see THRESHOLD_DAYS), which resets GitHub's 60-day inactivity clock and
+# keeps every scheduled workflow in this repo enabled. On an active repo it does
+# nothing, so it doesn't add commit noise.
+
+on:
+  # Twice a week, so a keepalive commit always lands well before the 60-day
+  # cutoff even if a run is skipped. Cron is UTC.
+  schedule:
+    - cron: "17 12 * * 1,4"   # Mon & Thu, 12:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # needed to push the keepalive commit
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nudge the repo if it is going stale
+        env:
+          # Days of inactivity after which we make a keepalive commit.
+          # MUST be comfortably below GitHub's 60-day cutoff.
+          THRESHOLD_DAYS: "45"
+        run: |
+          set -euo pipefail
+
+          LAST=$(git log -1 --format=%ct)
+          NOW=$(date +%s)
+          AGE_DAYS=$(( (NOW - LAST) / 86400 ))
+          echo "Days since last commit: $AGE_DAYS  (threshold: $THRESHOLD_DAYS, GitHub cutoff: 60)"
+
+          if [ "$AGE_DAYS" -lt "$THRESHOLD_DAYS" ]; then
+            echo "Repo is active enough — nothing to do."
+            exit 0
+          fi
+
+          echo "Repo idle for $AGE_DAYS days — writing keepalive marker to reset the 60-day clock."
+          mkdir -p .github
+          date -u "+Last keepalive: %Y-%m-%dT%H:%M:%SZ" > .github/keepalive.txt
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive.txt
+          git commit -m "chore: keepalive — keep scheduled workflows enabled"
+          git push
+          echo "Pushed keepalive commit."
