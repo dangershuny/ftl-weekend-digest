@@ -52,7 +52,9 @@ jobs:
           # alias table where "sonnet" still maps to the retired claude-sonnet-4;
           # an explicit ID bypasses that table and is sent straight to the API.
           model: claude-sonnet-5
-          max_turns: "60"
+          # Headroom so the model never runs out of turns before writing the file.
+          # A prior run hit the old 60-turn cap mid-research and wrote nothing.
+          max_turns: "120"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
             Find interesting events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) in the greater Fort Lauderdale area.
@@ -85,7 +87,7 @@ jobs:
 
             For EACH event, require ALL of: name, start time, venue, location (city in greater FTL), description, and a SPECIFIC event/ticket URL that deep-links to that event (NOT a generic venue calendar). Drop any event missing any of these. Do not invent details.
 
-            IMPORTANT: as soon as you have 12-16 solid events, STOP searching and WRITE events.json. A list of accurate entries beats a larger one with weak entries.
+            CRITICAL — NEVER RUN OUT OF TURNS WITH AN UNWRITTEN FILE: Your single most important job is to WRITE events.json. As soon as you have ~10 events, STOP searching and WRITE the file immediately. If turns remain you may re-write it with more/better events, but a written list of 10 accurate entries beats exhausting your turns with nothing saved. Do NOT verify URLs yourself with WebFetch — an automated step after you checks every URL and drops any that 404, so spending turns verifying only risks leaving the file unwritten.
 
             OUTPUT: write `events.json` to the repo root (use the Write tool) as a JSON array. Each element:
 
@@ -101,8 +103,8 @@ jobs:
               }
 
             Rules:
-            - 10 to 20 events total.
-            - Every "url" must be distinct, specific to its event, and load successfully (no 404s). Verify with WebFetch before including if you're unsure.
+            - 10 to 20 events total (but WRITE the file at ~10 rather than searching for more).
+            - Every "url" must be distinct and specific to its event (a deep link, not a generic venue calendar). A later automated step verifies every URL and drops dead ones — do NOT spend your own turns fetching or verifying URLs.
             - Do NOT include events outside greater Fort Lauderdale (no Miami, South Beach, etc.).
             - Do NOT include concerts, tribute bands, or music-centered events.
             - "when" includes day of week, date, start time, and "ET".
@@ -116,7 +118,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           model: claude-sonnet-5
-          max_turns: "60"
+          max_turns: "120"
           allowed_tools: "Bash,Write,WebSearch,WebFetch"
           prompt: |
             Find BIGGER, marquee-scale events happening this upcoming weekend (${{ steps.weekend.outputs.human }}, i.e. ${{ steps.weekend.outputs.fri }} through ${{ steps.weekend.outputs.sun }}) that are within roughly a 5-HOUR DRIVE of Fort Lauderdale, FL — in ANY direction.
@@ -151,7 +153,7 @@ jobs:
 
             For EACH event, require ALL of: name, start time, venue, location (city + how far / which metro), description, and a SPECIFIC event/ticket URL that deep-links to that event (NOT a generic venue calendar). Drop any event missing any of these. Do not invent details.
 
-            IMPORTANT: as soon as you have 8-12 solid events, STOP searching and WRITE events-regional.json. A list of accurate entries beats a larger one with weak entries.
+            CRITICAL — NEVER RUN OUT OF TURNS WITH AN UNWRITTEN FILE: Your single most important job is to WRITE events-regional.json. As soon as you have ~8 events, STOP searching and WRITE the file immediately. If turns remain you may re-write it with more/better events, but a written list beats exhausting your turns with nothing saved. Do NOT verify URLs yourself with WebFetch — an automated step after you checks every URL and drops any that 404.
 
             OUTPUT: write `events-regional.json` to the repo root (use the Write tool) as a JSON array. Each element:
 
@@ -167,8 +169,8 @@ jobs:
               }
 
             Rules:
-            - 8 to 14 events total.
-            - Every "url" must be distinct, specific to its event, and load successfully (no 404s). Verify with WebFetch before including if you're unsure.
+            - 8 to 14 events total (but WRITE the file at ~8 rather than searching for more).
+            - Every "url" must be distinct and specific to its event (a deep link, not a generic venue calendar). A later automated step verifies every URL and drops dead ones — do NOT spend your own turns fetching or verifying URLs.
             - Stay within ~5 hours' drive of Fort Lauderdale; do NOT include events in the immediate Broward / greater Fort Lauderdale area (those belong in the local digest).
             - Do NOT include concerts, tribute bands, or music-centered events.
             - "when" includes day of week, date, start time, and "ET".
@@ -180,19 +182,24 @@ jobs:
 
       - name: Validate events JSON files
         run: |
+          # A single flaky curation step must not sink the whole digest. Any file
+          # that is missing, empty, or not valid JSON is reset to an empty array so
+          # downstream steps simply skip that (empty) list. We only hard-fail — and
+          # thus fire the failure alert — if BOTH lists came back empty.
+          TOTAL=0
           for f in events.json events-regional.json; do
-            if [ ! -s "$f" ]; then
-              echo "::error::$f is missing or empty"
-              ls -la
-              exit 1
+            if [ ! -s "$f" ] || ! jq empty "$f" >/dev/null 2>&1; then
+              echo "::warning::$f is missing/empty/invalid — treating it as an empty list"
+              echo "[]" > "$f"
             fi
-            if ! jq empty "$f"; then
-              echo "::error::$f is not valid JSON"
-              cat "$f"
-              exit 1
-            fi
-            echo "Curated $(jq 'length' "$f") events in $f (pre URL-check)"
+            N=$(jq 'length' "$f")
+            echo "$f: $N events (pre URL-check)"
+            TOTAL=$((TOTAL + N))
           done
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::error::Both event lists came back empty — nothing to send"
+            exit 1
+          fi
 
       - name: Verify event URLs respond
         id: validate
@@ -359,42 +366,67 @@ jobs:
           COUNT: ${{ steps.validate.outputs.count }}
           COUNT_REGIONAL: ${{ steps.validate.outputs.count_regional }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # The deploy-pages page_url is the base (ends with "/").
           LOCAL_URL="$PAGE_URL"
           REGIONAL_URL="${PAGE_URL}regional.html"
+          MISSING=""
 
-          # --- Notification 1: local Fort Lauderdale events ---
-          EVENT_LIST=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events.json)
-          BODY=$(printf '%s events for %s — tap to open or follow the link below.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
-                  "$COUNT" "$HUMAN" "$EVENT_LIST" "$LOCAL_URL")
-          curl -sS --fail \
-            -H "Title: FTL Weekend — $HUMAN" \
-            -H "Tags: calendar" \
-            -H "Priority: default" \
-            -H "Click: $LOCAL_URL" \
-            -H "Actions: view, Open digest, $LOCAL_URL, clear=true" \
-            -H "Content-Type: text/plain; charset=utf-8" \
-            --data "$BODY" \
-            "https://ntfy.sh/$NTFY_TOPIC"
-          echo
-          echo "Sent local notification → $LOCAL_URL"
+          # --- Notification 1: local Fort Lauderdale events (only if any) ---
+          if [ "${COUNT:-0}" -gt 0 ]; then
+            EVENT_LIST=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events.json)
+            BODY=$(printf '%s events for %s — tap to open or follow the link below.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
+                    "$COUNT" "$HUMAN" "$EVENT_LIST" "$LOCAL_URL")
+            curl -sS --fail \
+              -H "Title: FTL Weekend — $HUMAN" \
+              -H "Tags: calendar" \
+              -H "Priority: default" \
+              -H "Click: $LOCAL_URL" \
+              -H "Actions: view, Open digest, $LOCAL_URL, clear=true" \
+              -H "Content-Type: text/plain; charset=utf-8" \
+              --data "$BODY" \
+              "https://ntfy.sh/$NTFY_TOPIC"
+            echo; echo "Sent local notification → $LOCAL_URL"
+          else
+            echo "Local list empty — skipping local notification."
+            MISSING="local Fort Lauderdale"
+          fi
 
-          # --- Notification 2: bigger events within a 5-hour drive ---
-          EVENT_LIST_REGIONAL=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events-regional.json)
-          BODY_REGIONAL=$(printf '%s bigger events within ~5h of Fort Lauderdale for %s — worth the drive.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
-                  "$COUNT_REGIONAL" "$HUMAN" "$EVENT_LIST_REGIONAL" "$REGIONAL_URL")
-          curl -sS --fail \
-            -H "Title: Bigger events near FTL (≤5h drive) — $HUMAN" \
-            -H "Tags: car,calendar" \
-            -H "Priority: default" \
-            -H "Click: $REGIONAL_URL" \
-            -H "Actions: view, Open regional digest, $REGIONAL_URL, clear=true" \
-            -H "Content-Type: text/plain; charset=utf-8" \
-            --data "$BODY_REGIONAL" \
-            "https://ntfy.sh/$NTFY_TOPIC"
-          echo
-          echo "Sent regional notification → $REGIONAL_URL"
+          # --- Notification 2: bigger events within a 5-hour drive (only if any) ---
+          if [ "${COUNT_REGIONAL:-0}" -gt 0 ]; then
+            EVENT_LIST_REGIONAL=$(jq -r '.[] | "\(.emoji // "•") \(.name)  ·  \(.cost // "Cost not listed")"' events-regional.json)
+            BODY_REGIONAL=$(printf '%s bigger events within ~5h of Fort Lauderdale for %s — worth the drive.\n\n%s\n\nFull details, addresses, and per-event tickets:\n%s' \
+                    "$COUNT_REGIONAL" "$HUMAN" "$EVENT_LIST_REGIONAL" "$REGIONAL_URL")
+            curl -sS --fail \
+              -H "Title: Bigger events near FTL (≤5h drive) — $HUMAN" \
+              -H "Tags: car,calendar" \
+              -H "Priority: default" \
+              -H "Click: $REGIONAL_URL" \
+              -H "Actions: view, Open regional digest, $REGIONAL_URL, clear=true" \
+              -H "Content-Type: text/plain; charset=utf-8" \
+              --data "$BODY_REGIONAL" \
+              "https://ntfy.sh/$NTFY_TOPIC"
+            echo; echo "Sent regional notification → $REGIONAL_URL"
+          else
+            echo "Regional list empty — skipping regional notification."
+            MISSING="${MISSING:+$MISSING and }bigger regional"
+          fi
+
+          # If exactly one list failed to curate, the run still succeeds (the other
+          # digest sent), so the failure() alert won't fire. Send a heads-up so a
+          # partial failure is never silent.
+          if [ -n "$MISSING" ]; then
+            curl -sS \
+              -H "Title: ⚠️ FTL Weekend — $MISSING list was empty" \
+              -H "Tags: warning" \
+              -H "Priority: default" \
+              -H "Click: $RUN_URL" \
+              -H "Content-Type: text/plain; charset=utf-8" \
+              --data "The $MISSING list didn't curate this week; any other digest was still sent. Tap to view the run log." \
+              "https://ntfy.sh/$NTFY_TOPIC" || true
+            echo "Sent partial-failure heads-up ($MISSING)."
+          fi
 
       # Safety net: if ANY step above failed, tell the user instead of failing
       # silently. This is why the digest could break for weeks unnoticed.
